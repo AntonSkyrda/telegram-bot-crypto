@@ -1,5 +1,7 @@
+import asyncio
 import os
 import logging
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -113,9 +115,6 @@ async def get_withdrawal_address(message: types.Message, state: FSMContext):
 
 
 if __name__ == "__main__":
-    import asyncio
-
-
     async def main():
         await dp.start_polling(bot)
 
