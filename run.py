@@ -115,8 +115,13 @@ async def get_withdrawal_address(message: types.Message, state: FSMContext):
 
 
 if __name__ == "__main__":
-    async def main():
-        await dp.start_polling(bot)
+    try:
+        async def main():
+            await dp.start_polling(bot)
+
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped")
 
 
-    asyncio.run(main())
+
