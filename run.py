@@ -1,6 +1,7 @@
 import asyncio
 import os
 import logging
+import uuid
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -10,8 +11,12 @@ from aiogram import F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from database.database import SessionLocal, User
-from tonclient.client import TonClient, ClientConfig
-from tonclient.types import NetworkConfig, ParamsOfQueryCollection
+from tonclient.client import TonClient
+from tonclient.types import (
+    ClientConfig,
+    NetworkConfig,
+    ParamsOfQueryCollection,
+)
 
 load_dotenv()
 
@@ -26,28 +31,33 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 client = TonClient(config=ClientConfig(network=NetworkConfig(
-    server_address="https://devnet.ton.dev",  # Для DevNet
-    endpoints=["https://devnet.evercloud.dev/8ef464873ace4b81b48bd0ee4330b255/graphql"],
+    server_address="https://mainnet.ton.dev",
+    endpoints=["https://mainnet.evercloud.dev/8ef464873ace4b81b48bd0ee4330b255/graphql"],
     access_key=EVERCLOUD_API_KEY
 )))
 
 
-async def generate_ton_address():
-    try:
-        key_pair = client.crypto.generate_random_sign_keys()
-
-        address = key_pair.public
-
-        return address
-    except Exception as e:
-        logger.error(f"Помилка при генерації TON адреси: {e}")
-        return None
-
-
+# States definition
 class WithdrawState(StatesGroup):
     waiting_for_address = State()
 
 
+class TopUpState(StatesGroup):
+    waiting_for_topup_amount = State()
+
+
+# Generate TON address function
+async def generate_ton_address():
+    try:
+        key_pair = client.crypto.generate_random_sign_keys()
+        address = key_pair.public
+        return address
+    except Exception as e:
+        logger.error(f"Error generating TON address: {e}")
+        return None
+
+
+# Handler for /start command
 @dp.message(Command("start"))
 async def send_welcome(message: types.Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -57,30 +67,30 @@ async def send_welcome(message: types.Message):
     await message.answer("Выберите опцию:", reply_markup=keyboard)
 
 
-@dp.callback_query(F.data == "top_up")
+def generate_payment_request_id():
+    return str(uuid.uuid4())
+
+
+@dp.callback_query(lambda c: c.data == "top_up")
 async def process_top_up(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
+
+    # Generate a unique payment request
+    payment_request = generate_payment_request_id()
 
     with SessionLocal() as db:
         user = db.query(User).filter(User.telegram_id == user_id).first()
         if not user:
-            address = await generate_ton_address()
-            if not address:
-                await callback_query.message.answer("Помилка при генерації TON адреси.")
-                await callback_query.answer()
-                return
+            await callback_query.message.answer("Пользователь не найден.")
+            await callback_query.answer()
+            return
 
-            user = User(telegram_id=user_id, pub_key=address)
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-
-        pub_key = user.pub_key
-        await callback_query.message.answer(f"Ваш TON адрес: {pub_key}")
+        await callback_query.message.answer(f"Для пополнения отправьте TON на адрес: {payment_request}")
         await callback_query.answer()
 
 
-@dp.callback_query(F.data == "withdraw")
+# Handler for withdraw callback query
+@dp.callback_query(lambda c: c.data == "withdraw")
 async def process_withdraw(callback_query: types.CallbackQuery, state: FSMContext):
     user_id = callback_query.from_user.id
 
@@ -115,8 +125,10 @@ async def process_withdraw(callback_query: types.CallbackQuery, state: FSMContex
         await callback_query.answer()
 
 
-@dp.message(F.text, WithdrawState.waiting_for_address)
 async def get_withdrawal_address(message: types.Message, state: FSMContext):
+    if message.from_user.id != state.data['user_id'] or state.state != WithdrawState.waiting_for_address:
+        return
+
     withdrawal_address = message.text
     user_id = message.from_user.id
 
@@ -144,11 +156,12 @@ async def get_withdrawal_address(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+async def main():
+    await dp.start_polling(bot)
+
+
 if __name__ == "__main__":
     try:
-        async def main():
-            await dp.start_polling(bot)
-
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Bot stopped")
