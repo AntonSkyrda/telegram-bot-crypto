@@ -32,6 +32,18 @@ client = TonClient(config=ClientConfig(network=NetworkConfig(
 )))
 
 
+async def generate_ton_address():
+    try:
+        key_pair = client.crypto.generate_random_sign_keys()
+
+        address = key_pair.public
+
+        return address
+    except Exception as e:
+        logger.error(f"Помилка при генерації TON адреси: {e}")
+        return None
+
+
 class WithdrawState(StatesGroup):
     waiting_for_address = State()
 
@@ -52,9 +64,12 @@ async def process_top_up(callback_query: types.CallbackQuery):
     with SessionLocal() as db:
         user = db.query(User).filter(User.telegram_id == user_id).first()
         if not user:
-            # Assuming you have some logic to generate a TON address
-            # Replace the below line with the correct logic to generate the address
-            address = "Generated_TON_Address"
+            address = await generate_ton_address()
+            if not address:
+                await callback_query.message.answer("Помилка при генерації TON адреси.")
+                await callback_query.answer()
+                return
+
             user = User(telegram_id=user_id, pub_key=address)
             db.add(user)
             db.commit()
@@ -87,8 +102,8 @@ async def process_withdraw(callback_query: types.CallbackQuery, state: FSMContex
         balance_result = client.net.query_collection(params=params)
 
         balance_hex = balance_result.result[0]["balance"]
-        balance_nano = int(balance_hex, 16)  # Конвертуємо з шістнадцяткового у десятковий формат
-        balance = balance_nano / 1e9  # Конвертуємо з nano у звичайні TON
+        balance_nano = int(balance_hex, 16)
+        balance = balance_nano / 1e9
 
         if balance == 0:
             await callback_query.message.answer("Ваш баланс равен нулю.")
